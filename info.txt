@@ -1,0 +1,316 @@
+1. High-Level Architecture Overview
+Goal
+A book recommendation platform that:
+Lets users sign up and fill a preference (KYC) form
+Persists metadata and embeddings for ~200k books in Postgres
+Periodically trains models to refresh embeddings and user vectors
+Serves real-time personalized recommendations via an API
+
+
+Core Components
+Component
+Description
+Tech
+Database
+Stores books, users, interactions, and all embeddings
+PostgreSQL + pgvector
+Embedding/Training Jobs
+Generate/update embeddings for content, CF, and GNN
+Python jobs (cron or background workers)
+API Service
+Handles user auth, preferences, and /recommendendpoint
+FastAPI + asyncpg
+Model Store
+Persist local trained models (e.g., ALS, GNN weights)
+local models/ folder or S3
+Data Preprocessing
+Cleans metadata, builds text for embeddings
+pandas, numpy
+Frontend (optional)
+React/Vue UI for user registration & recommendations
+(can come later)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Flow Summary
+User Signup → KYC
+User fills form (genres, authors, age, etc.)
+Stored in users table with a text embedding of KYC data
+Book Import
+Script parses dataset dump (200k records)
+Computes sentence embeddings (content_embedding)
+Saves to Postgres
+Training Jobs
+CF (ALS): learns latent factors from user interactions
+→ updates users.cf_vector, books.cf_embedding
+GNN: learns relational embeddings from user–book graph
+→ updates books.gnn_vector
+All embeddings persisted to Postgres
+Recommendation
+API aggregates user vectors (content + CF + GNN)
+Queries Postgres for nearest neighbors via pgvector
+Returns top recommendations (hybrid weighted score)
+Feedback Loop
+User actions logged as interactions
+Training jobs periodically update embeddings with new data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+book-recommender/
+│
+├── 📁 app/
+│   ├── __init__.py
+│   ├── main.py                     # FastAPI entrypoint
+│   ├── config.py                   # env vars, DB URL, model paths
+│   ├── db/
+│   │   ├── __init__.py
+│   │   ├── connection.py           # asyncpg connection pool
+│   │   └── schema.sql              # create tables, enable pgvector
+│   ├── models/
+│   │   ├── book_model.py           # SQL + Pydantic models
+│   │   ├── user_model.py
+│   │   └── interaction_model.py
+│   ├── routers/
+│   │   ├── auth.py                 # login/signup
+│   │   ├── recommend.py            # /recommend endpoint
+│   │   └── users.py                # CRUD endpoints for users
+│   ├── services/
+│   │   ├── recommender.py          # hybrid scoring logic
+│   │   ├── embedding_service.py    # wraps SentenceTransformer
+│   │   ├── cf_service.py           # CF scoring helper
+│   │   └── gnn_service.py          # GNN model utilities
+│   └── utils/
+│       ├── preprocessing.py        # text cleaners, normalizers
+│       ├── vector_ops.py           # dot products, normalization
+│       └── logger.py
+│
+├── 📁 data/
+│   ├── books_dump.json             # 200k book dataset
+│   ├── interactions.csv            # user-book interactions
+│   └── samples/                    # sample subsets for local dev
+│
+├── 📁 notebooks/
+│   ├── train_cf.ipynb              # ALS training + update Postgres
+│   ├── train_gnn.ipynb             # GraphSAGE training example
+│   └── embedding_exploration.ipynb # EDA on embeddings
+│
+├── 📁 scripts/
+│   ├── ingest_books.py             # import + embed book dataset
+│   ├── build_content_embeddings.py # SentenceTransformer embedding job
+│   ├── train_cf.py                 # batch ALS training job
+│   ├── train_gnn.py                # batch GNN training job
+│   └── refresh_user_vectors.py     # aggregate KYC + interactions
+│
+├── 📁 models/
+│   ├── sentence_model/             # local SBERT cache
+│   ├── cf_model.pkl                # pickled ALS model
+│   ├── gnn_model.pt                # saved GNN weights
+│
+├── 📁 tests/
+│   ├── test_recommend_api.py
+│   ├── test_embeddings.py
+│   └── test_cf_model.py
+│
+├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml              # spins up Postgres + FastAPI
+├── README.md
+└── .env
+
+
+
+
+
+
+
+
+
+
+
+[User -> FastAPI /recommend]
+         |
+         v
+[RecommenderService]
+  1. Load user's KYC prefs & vectors
+  2. Encode preferences via SentenceTransformer
+  3. Query Postgres (pgvector) for nearest books
+  4. Merge CF and GNN similarities
+  5. Return top-N ranked books
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+D. Data Lifecycle
+Step
+Process
+Data Updated
+Import
+Load & embed 200k books
+books.content_embedding
+CF training
+Learn latent vectors from interactions
+users.cf_vector, books.cf_embedding
+GNN training
+Learn structure embeddings
+books.gnn_vector
+Inference
+Query vectors for recommendation
+Uses all above
+Feedback
+Store clicks/ratings
+interactions
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+E. API Overview
+Endpoint
+Method
+Description
+/auth/signup
+POST
+Create user, store KYC + embeddings
+/auth/login
+POST
+JWT login
+/recommend
+POST
+Get recommendations (based on user_id or KYC prefs)
+/books/{id}
+GET
+Get book details
+/interactions
+POST
+Log click/like/view
+/users/{id}
+GET
+Get user profile
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      ┌────────────┐
+      │ Frontend   │
+      └──────┬─────┘
+             │ REST / JSON
+             ▼
+      ┌────────────┐
+      │ FastAPI    │
+      │ Recommender│
+      └──────┬─────┘
+             │ asyncpg queries
+             ▼
+      ┌────────────┐
+      │ PostgreSQL │
+      │ + pgvector │
+      └────────────┘
+             ▲
+             │ batch updates
+             ▼
+   ┌───────────────────────┐
+   │ Training Jobs (Python)│
+   │ - Embeddings (SBERT)  │
+   │ - CF (ALS)            │
+   │ - GNN (PyG)           │
+   └───────────────────────┘
+
+
