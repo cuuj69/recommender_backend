@@ -38,11 +38,11 @@ async def get_admin_user(credentials: HTTPAuthorizationCredentials = Depends(sec
 
 @router.get("/metrics")
 async def get_metrics(
-    k: int = Query(10, ge=1, le=50, description="K for Precision@K"),
+    k: int = Query(10, ge=1, le=50, description="Default K for backward compatibility"),
     min_interactions: int = Query(5, ge=1, description="Minimum interactions for evaluation"),
     admin_user=Depends(get_admin_user)
 ):
-    """Get global metrics (RMSE, Precision@K, counts)."""
+    """Get global metrics (RMSE, MAE, Precision@K, Recall@K, nDCG@K, counts)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         # Get counts
@@ -55,13 +55,17 @@ async def get_metrics(
         books_with_cf = await conn.fetchval("SELECT COUNT(*) FROM books WHERE cf_embedding IS NOT NULL")
         books_with_gnn = await conn.fetchval("SELECT COUNT(*) FROM books WHERE gnn_vector IS NOT NULL")
         
-        # Get evaluation metrics
+        # Get evaluation metrics with multiple k values
         eval_results = await eval_service.evaluate_recommender(k=k, min_interactions=min_interactions)
     
     return {
         "metrics": {
             "rmse": eval_results.get("rmse"),
-            "precision_at_k": eval_results.get("precision_at_k"),
+            "mae": eval_results.get("mae"),
+            "precision_at_k": eval_results.get("precision_at_k", {}),
+            "recall_at_k": eval_results.get("recall_at_k", {}),
+            "ndcg_at_k": eval_results.get("ndcg_at_k", {}),
+            "rmse_table": eval_results.get("rmse_table", []),
             "num_eval_users": eval_results.get("num_eval_users", 0),
             "num_rating_samples": eval_results.get("num_rating_samples", 0),
         },

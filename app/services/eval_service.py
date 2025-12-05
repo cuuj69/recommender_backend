@@ -1,4 +1,4 @@
-"""Evaluation service for the recommender (RMSE + Precision@K)."""
+"""Evaluation service for the recommender (RMSE, MAE, Precision@K, Recall@K, nDCG@K)."""
 
 from __future__ import annotations
 
@@ -101,18 +101,74 @@ async def _load_cf_vectors(
     return user_vectors, book_vectors
 
 
+def _calculate_recall_at_k(recommended_ids: set, relevant_ids: set, k: int) -> float:
+    """Calculate Recall@K: proportion of relevant items found in top K recommendations."""
+    if not relevant_ids:
+        return 0.0
+    hits = len(recommended_ids & relevant_ids)
+    return hits / float(len(relevant_ids))
+
+
+def _calculate_ndcg_at_k(recommended_ids: List[int], relevant_ids: set, k: int) -> float:
+    """Calculate nDCG@K: normalized discounted cumulative gain at K."""
+    if not relevant_ids:
+        return 0.0
+    
+    # Calculate DCG@K
+    dcg = 0.0
+    for i, book_id in enumerate(recommended_ids[:k], start=1):
+        if book_id in relevant_ids:
+            # rel = 1 if relevant, 0 otherwise
+            # DCG = sum(rel_i / log2(i+1))
+            dcg += 1.0 / math.log2(i + 1)
+    
+    # Calculate IDCG@K (ideal DCG - all relevant items at the top)
+    idcg = 0.0
+    num_relevant = min(len(relevant_ids), k)
+    for i in range(1, num_relevant + 1):
+        idcg += 1.0 / math.log2(i + 1)
+    
+    # nDCG = DCG / IDCG
+    if idcg == 0.0:
+        return 0.0
+    return dcg / idcg
+
+
 async def evaluate_recommender(
     k: int = 10,
     min_interactions: int = 5,
+    k_values: Optional[List[int]] = None,
 ) -> Dict[str, object]:
-    """Run evaluation and return metrics as a dict."""
+    """Run evaluation and return metrics as a dict.
+    
+    Args:
+        k: Default K value (for backward compatibility)
+        min_interactions: Minimum interactions per user for evaluation
+        k_values: List of K values to evaluate (default: [5, 10, 20, 50])
+    
+    Returns:
+        Dictionary with all evaluation metrics including:
+        - precision_at_k: Dict mapping k values to precision scores
+        - recall_at_k: Dict mapping k values to recall scores
+        - ndcg_at_k: Dict mapping k values to nDCG scores
+        - rmse: Root Mean Squared Error
+        - mae: Mean Absolute Error
+        - rmse_table: List of actual vs predicted pairs
+    """
+    if k_values is None:
+        k_values = [5, 10, 20, 50]
+    
     pool = await init_db()
     async with pool.acquire() as conn:
         interactions = await _load_interactions(conn)
         if not interactions:
             return {
-                "precision_at_k": None,
+                "precision_at_k": {},
+                "recall_at_k": {},
+                "ndcg_at_k": {},
                 "rmse": None,
+                "mae": None,
+                "rmse_table": [],
                 "num_eval_users": 0,
                 "num_rating_samples": 0,
                 "note": "No interactions in database",
@@ -122,35 +178,62 @@ async def evaluate_recommender(
         test_users = list(test.keys())
         if not test_users:
             return {
-                "precision_at_k": None,
+                "precision_at_k": {},
+                "recall_at_k": {},
+                "ndcg_at_k": {},
                 "rmse": None,
+                "mae": None,
+                "rmse_table": [],
                 "num_eval_users": 0,
                 "num_rating_samples": 0,
                 "note": f"No users with >= {min_interactions} interactions for evaluation",
             }
 
-        # Load CF vectors once for RMSE
+        # Load CF vectors once for RMSE/MAE
         user_cf, book_cf = await _load_cf_vectors(conn)
 
-    precisions: List[float] = []
+    # Initialize accumulators for multiple k values
+    precisions_by_k: Dict[int, List[float]] = {k_val: [] for k_val in k_values}
+    recalls_by_k: Dict[int, List[float]] = {k_val: [] for k_val in k_values}
+    ndcgs_by_k: Dict[int, List[float]] = {k_val: [] for k_val in k_values}
+    
+    # For RMSE and MAE
     sq_errors: List[float] = []
+    abs_errors: List[float] = []
+    rmse_table: List[Dict[str, Union[float, str]]] = []  # actual, predicted, user_id, book_id
     rating_count = 0
+    
+    max_k = max(k_values) if k_values else k
 
     for user_id in test_users:
         test_interactions = test[user_id]
+        relevant_ids = {inter.book_id for inter in test_interactions}
 
-        # Precision@K using hybrid recommender
+        # Get recommendations for the maximum k needed
         try:
-            rec_books = await recommender.recommend_for_user(user_id, limit=k)
+            rec_books = await recommender.recommend_for_user(user_id, limit=max_k)
         except Exception:  # noqa: BLE001
             continue
 
-        rec_ids = {b.id for b in rec_books}
-        relevant_ids = {inter.book_id for inter in test_interactions}
-        hits = len(rec_ids & relevant_ids)
-        precisions.append(hits / float(k))
+        rec_ids_list = [b.id for b in rec_books]
+        rec_ids_set = set(rec_ids_list)
 
-        # RMSE using CF vectors and ratings
+        # Calculate metrics for each k value
+        for k_val in k_values:
+            # Precision@K
+            top_k_recs = rec_ids_set if len(rec_ids_list) <= k_val else set(rec_ids_list[:k_val])
+            hits = len(top_k_recs & relevant_ids)
+            precisions_by_k[k_val].append(hits / float(k_val))
+            
+            # Recall@K
+            recall = _calculate_recall_at_k(top_k_recs, relevant_ids, k_val)
+            recalls_by_k[k_val].append(recall)
+            
+            # nDCG@K
+            ndcg = _calculate_ndcg_at_k(rec_ids_list, relevant_ids, k_val)
+            ndcgs_by_k[k_val].append(ndcg)
+
+        # RMSE and MAE using CF vectors and ratings
         for inter in test_interactions:
             if inter.rating is None:
                 continue
@@ -166,26 +249,61 @@ async def evaluate_recommender(
 
             sim = max(-1.0, min(1.0, sim))
             pred = 2.0 + 3.0 * sim  # map to ~[ -1,1 ] -> [ -1,5 ]
-            err = pred - inter.rating
+            actual = inter.rating
+            
+            err = pred - actual
             sq_errors.append(err * err)
+            abs_errors.append(abs(err))
             rating_count += 1
+            
+            # Store for RMSE table (limit to first 100 samples for display)
+            if len(rmse_table) < 100:
+                rmse_table.append({
+                    "user_id": str(user_id),
+                    "book_id": inter.book_id,
+                    "actual": round(actual, 3),
+                    "predicted": round(pred, 3),
+                    "error": round(err, 3),
+                })
 
-    precision_value: Optional[float]
-    if precisions:
-        precision_value = sum(precisions) / len(precisions)
-    else:
-        precision_value = None
+    # Calculate average metrics for each k
+    precision_at_k: Dict[int, Optional[float]] = {}
+    recall_at_k: Dict[int, Optional[float]] = {}
+    ndcg_at_k: Dict[int, Optional[float]] = {}
+    
+    for k_val in k_values:
+        if precisions_by_k[k_val]:
+            precision_at_k[k_val] = sum(precisions_by_k[k_val]) / len(precisions_by_k[k_val])
+        else:
+            precision_at_k[k_val] = None
+            
+        if recalls_by_k[k_val]:
+            recall_at_k[k_val] = sum(recalls_by_k[k_val]) / len(recalls_by_k[k_val])
+        else:
+            recall_at_k[k_val] = None
+            
+        if ndcgs_by_k[k_val]:
+            ndcg_at_k[k_val] = sum(ndcgs_by_k[k_val]) / len(ndcgs_by_k[k_val])
+        else:
+            ndcg_at_k[k_val] = None
 
-    rmse_value: Optional[float]
+    # Calculate RMSE and MAE
+    rmse_value: Optional[float] = None
     if rating_count > 0 and sq_errors:
         rmse_value = math.sqrt(sum(sq_errors) / rating_count)
-    else:
-        rmse_value = None
+    
+    mae_value: Optional[float] = None
+    if rating_count > 0 and abs_errors:
+        mae_value = sum(abs_errors) / len(abs_errors)
 
     return {
-        "precision_at_k": precision_value,
+        "precision_at_k": precision_at_k,
+        "recall_at_k": recall_at_k,
+        "ndcg_at_k": ndcg_at_k,
         "rmse": rmse_value,
-        "num_eval_users": len(precisions),
+        "mae": mae_value,
+        "rmse_table": rmse_table,
+        "num_eval_users": len(test_users),
         "num_rating_samples": rating_count,
     }
 
