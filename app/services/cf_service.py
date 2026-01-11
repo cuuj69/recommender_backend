@@ -22,7 +22,7 @@ async def get_user_cf_vector(user_id: Union[str, UUID]) -> Optional[List[float]]
         return row["cf_vector"]
 
 
-async def get_top_books_by_cf(user_cf_vector: List[float], limit: int = 10, sample_size: int = 10000):
+async def get_top_books_by_cf(user_cf_vector: List[float], limit: int = 10, sample_size: int = 2000):
     """Get top books by CF similarity (optimized with numpy and smart sampling)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -46,12 +46,12 @@ async def get_top_books_by_cf(user_cf_vector: List[float], limit: int = 10, samp
                 """
             )
         else:
-            # Smart sampling: mix of popular books and random selection
-            # 60% from popular books (by interactions), 40% random
-            popular_count = int(sample_size * 0.6)
+            # Optimized sampling: mostly popular books
+            # 80% popular, 20% diverse (using ID pattern instead of RANDOM())
+            popular_count = int(sample_size * 0.8)
             random_count = sample_size - popular_count
             
-            # Get popular books (by interaction count)
+            # Get popular books (optimized query)
             popular_books = await conn.fetch(
                 """
                 SELECT b.id, b.title, b.author, b.description, b.genres, b.cf_embedding
@@ -59,39 +59,27 @@ async def get_top_books_by_cf(user_cf_vector: List[float], limit: int = 10, samp
                 LEFT JOIN interactions i ON i.book_id = b.id
                 WHERE b.cf_embedding IS NOT NULL
                 GROUP BY b.id, b.title, b.author, b.description, b.genres, b.cf_embedding
-                ORDER BY COUNT(i.id) DESC
+                ORDER BY COUNT(i.id) DESC, b.id DESC
                 LIMIT $1
                 """,
                 popular_count
             )
             
-            # Get random books (excluding popular ones)
-            popular_ids = [book["id"] for book in popular_books]
-            
-            if popular_ids:
+            # Fast random sampling using ID pattern (avoid ORDER BY RANDOM())
+            if random_count > 0:
                 random_books = await conn.fetch(
                     """
                     SELECT id, title, author, description, genres, cf_embedding
                     FROM books
                     WHERE cf_embedding IS NOT NULL
-                    AND id NOT IN (SELECT unnest($1::int[]))
-                    ORDER BY RANDOM()
-                    LIMIT $2
-                    """,
-                    popular_ids,
-                    random_count
-                )
-            else:
-                random_books = await conn.fetch(
-                    """
-                    SELECT id, title, author, description, genres, cf_embedding
-                    FROM books
-                    WHERE cf_embedding IS NOT NULL
-                    ORDER BY RANDOM()
+                    AND id % 7 = 0  -- Sample pattern for diversity
+                    ORDER BY id DESC
                     LIMIT $1
                     """,
                     random_count
                 )
+            else:
+                random_books = []
             
             records = list(popular_books) + list(random_books)
     

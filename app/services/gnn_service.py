@@ -45,7 +45,7 @@ async def get_top_books_by_gnn(user_id: Union[str, UUID], limit: int = 10):
             """
         )
         
-        sample_size = 10000  # Increased for better coverage with large datasets
+        sample_size = 2000  # Optimized for performance while maintaining quality
         
         # Smart sampling: mix of popular books and random selection
         if total_count == 0:
@@ -60,11 +60,12 @@ async def get_top_books_by_gnn(user_id: Union[str, UUID], limit: int = 10):
                 """
             )
         else:
-            # 60% from popular books (by interactions), 40% random
-            popular_count = int(sample_size * 0.6)
+            # Optimized sampling: mostly popular books
+            # 80% popular, 20% diverse (using ID pattern instead of RANDOM())
+            popular_count = int(sample_size * 0.8)
             random_count = sample_size - popular_count
             
-            # Get popular books (by interaction count)
+            # Get popular books (optimized query)
             popular_books = await conn.fetch(
                 """
                 SELECT b.id, b.title, b.author, b.description, b.genres, b.gnn_vector
@@ -72,39 +73,27 @@ async def get_top_books_by_gnn(user_id: Union[str, UUID], limit: int = 10):
                 LEFT JOIN interactions i ON i.book_id = b.id
                 WHERE b.gnn_vector IS NOT NULL
                 GROUP BY b.id, b.title, b.author, b.description, b.genres, b.gnn_vector
-                ORDER BY COUNT(i.id) DESC
+                ORDER BY COUNT(i.id) DESC, b.id DESC
                 LIMIT $1
                 """,
                 popular_count
             )
             
-            # Get random books (excluding popular ones)
-            popular_ids = [book["id"] for book in popular_books]
-            
-            if popular_ids:
+            # Fast random sampling using ID pattern (avoid ORDER BY RANDOM())
+            if random_count > 0:
                 random_books = await conn.fetch(
                     """
                     SELECT id, title, author, description, genres, gnn_vector
                     FROM books
                     WHERE gnn_vector IS NOT NULL
-                    AND id NOT IN (SELECT unnest($1::int[]))
-                    ORDER BY RANDOM()
-                    LIMIT $2
-                    """,
-                    popular_ids,
-                    random_count
-                )
-            else:
-                random_books = await conn.fetch(
-                    """
-                    SELECT id, title, author, description, genres, gnn_vector
-                    FROM books
-                    WHERE gnn_vector IS NOT NULL
-                    ORDER BY RANDOM()
+                    AND id % 7 = 0  -- Sample pattern for diversity
+                    ORDER BY id DESC
                     LIMIT $1
                     """,
                     random_count
                 )
+            else:
+                random_books = []
             
             all_books = list(popular_books) + list(random_books)
     
