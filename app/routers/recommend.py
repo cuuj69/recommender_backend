@@ -15,8 +15,16 @@ class RecommendRequest(BaseModel):
     limit: int = 10
 
 
+class RecommendationMetadata(BaseModel):
+    is_personalized: bool
+    interaction_count: int
+    min_required: int
+    needs_more: int
+
+
 class RecommendResponse(BaseModel):
     recommendations: List[Book]
+    metadata: RecommendationMetadata
 
 
 @router.post("/", response_model=RecommendResponse)
@@ -24,13 +32,18 @@ async def get_recommendations(
     payload: RecommendRequest,
     current_user=Depends(get_current_user)
 ):
-    """Get personalized recommendations for the authenticated user (ensures no duplicates)."""
+    """Get personalized recommendations for the authenticated user (ensures no duplicates).
+    
+    Returns recommendations along with metadata about personalization status and interaction requirements.
+    """
     user_id = current_user["id"]
-    books = await recommender.recommend_for_user(user_id, payload.limit)
+    books, metadata = await recommender.recommend_for_user(user_id, payload.limit)
+    
     if not books:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No recommendations available. Try adding some book interactions first."
+        # Still return metadata even if no books, so frontend can show helpful message
+        return RecommendResponse(
+            recommendations=[],
+            metadata=RecommendationMetadata(**metadata)
         )
     
     # Final deduplication safety check by book ID
@@ -42,26 +55,7 @@ async def get_recommendations(
             seen_ids.add(book_id)
             unique_books.append(book)
     
-    # If we have no recommendations, check if user has interactions to provide better error message
-    if not unique_books:
-        from app.services import interaction_service
-        from app.db.connection import get_pool
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            interaction_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM interactions WHERE user_id = $1",
-                user_id
-            )
-        
-        if interaction_count and interaction_count > 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No recommendations available. The system is still processing your interactions. Please try again in a moment or interact with more books."
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No recommendations available. Try interacting with some books (like, view, rate) to get personalized recommendations."
-            )
-    
-    return RecommendResponse(recommendations=unique_books[:payload.limit])
+    return RecommendResponse(
+        recommendations=unique_books[:payload.limit],
+        metadata=RecommendationMetadata(**metadata)
+    )
