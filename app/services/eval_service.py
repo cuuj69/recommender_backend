@@ -211,7 +211,7 @@ async def evaluate_recommender(
 
         # Get recommendations for the maximum k needed
         try:
-            rec_books = await recommender.recommend_for_user(user_id, limit=max_k)
+            rec_books, metadata = await recommender.recommend_for_user(user_id, limit=max_k)
         except Exception:  # noqa: BLE001
             continue
 

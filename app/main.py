@@ -11,12 +11,16 @@ app = FastAPI(
     description="Hybrid recommendation engine combining content, CF, and GNN embeddings.",
 )
 
+# CORS configuration - allow all origins
+# Note: When allow_origins=["*"], allow_credentials must be False
+# This works fine with JWT tokens in Authorization headers
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,  # Must be False when using "*"
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
@@ -69,5 +73,4 @@ app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(books.router, prefix="/books", tags=["books"])
 app.include_router(interactions.router, prefix="/interactions", tags=["interactions"])
 app.include_router(recommend.router, prefix="/recommend", tags=["recommend"])
-app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])

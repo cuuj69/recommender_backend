@@ -56,7 +56,15 @@ async def get_metrics(
         books_with_gnn = await conn.fetchval("SELECT COUNT(*) FROM books WHERE gnn_vector IS NOT NULL")
         
         # Get evaluation metrics with multiple k values
-        eval_results = await eval_service.evaluate_recommender(k=k, min_interactions=min_interactions)
+        try:
+            eval_results = await eval_service.evaluate_recommender(k=k, min_interactions=min_interactions)
+        except Exception as e:
+            import logging
+            logging.error(f"Error evaluating recommender: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error evaluating recommender: {str(e)}"
+            )
     
     return {
         "metrics": {

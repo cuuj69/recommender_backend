@@ -35,7 +35,7 @@ async def build_user_graph(user_id: Union[str, UUID], max_books: int = 20) -> Di
         rec_ids = set()
         try:
             from app.services import recommender
-            rec_books = await recommender.recommend_for_user(user_id, limit=10)
+            rec_books, metadata = await recommender.recommend_for_user(user_id, limit=10)
             rec_ids = {b.id for b in rec_books}
         except Exception:
             pass
