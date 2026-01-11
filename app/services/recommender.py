@@ -284,7 +284,7 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                             "SELECT DISTINCT book_id FROM interactions WHERE user_id = $1",
                             user_id
                         )
-                            interacted_ids = {row["book_id"] for row in interacted_books}
+                        interacted_ids = {row["book_id"] for row in interacted_books}
                         
                         any_books = await conn2.fetch(
                             """
