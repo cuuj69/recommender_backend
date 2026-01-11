@@ -49,6 +49,12 @@ async def build_user_graph(user_id: Union[str, UUID], max_books: int = 20) -> Di
                 SELECT id, title, author, genres, content_embedding, cf_embedding
                 FROM books
                 WHERE id = ANY($1::int[])
+                    AND title IS NOT NULL 
+                    AND title != '' 
+                    AND author IS NOT NULL 
+                    AND author != '' 
+                    AND description IS NOT NULL 
+                    AND description != ''
                 """,
                 book_ids
             )
@@ -158,6 +164,12 @@ async def build_overview_graph(max_users: int = 50, max_books: int = 100) -> Dic
             SELECT b.id, b.title, b.author, b.genres, COUNT(i.id) as interaction_count
             FROM books b
             LEFT JOIN interactions i ON i.book_id = b.id
+            WHERE b.title IS NOT NULL 
+                AND b.title != '' 
+                AND b.author IS NOT NULL 
+                AND b.author != '' 
+                AND b.description IS NOT NULL 
+                AND b.description != ''
             GROUP BY b.id, b.title, b.author, b.genres
             ORDER BY interaction_count DESC
             LIMIT $1

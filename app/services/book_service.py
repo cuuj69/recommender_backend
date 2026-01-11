@@ -25,7 +25,13 @@ async def list_books(
     """List books with optional filtering (ensures no duplicates)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        query = "SELECT DISTINCT ON (id) * FROM books WHERE 1=1"
+        query = """SELECT DISTINCT ON (id) * FROM books 
+                   WHERE title IS NOT NULL 
+                   AND title != '' 
+                   AND author IS NOT NULL 
+                   AND author != '' 
+                   AND description IS NOT NULL 
+                   AND description != ''"""
         params = []
         param_count = 0
 
