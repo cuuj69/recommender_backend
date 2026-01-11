@@ -47,19 +47,19 @@ async def list_books(
         # Check if we have any filters - if not, we'll randomize for variety
         has_filters = bool(search or author or genre)
         
+        # DISTINCT ON (id) requires ORDER BY to start with id
+        # We'll order by id first (required), then randomize in Python
         if has_filters:
-            # When filtering, order by relevance (keep some order but still add variety)
+            # When filtering, order by relevance
             query += " ORDER BY id, created_at DESC"
         else:
-            # No filters - use a pseudo-random ordering that changes each time
-            # Use a combination that will give different results without ORDER BY RANDOM()
-            # We'll fetch more and randomize in Python for better performance
-            query += " ORDER BY (id * 7919) % 10000 DESC"  # Pseudo-random pattern
+            # No filters - order by id (required for DISTINCT ON) but we'll randomize in Python
+            query += " ORDER BY id DESC"
         
         param_count += 1
         query += f" LIMIT ${param_count}"
         # Fetch more than needed if no filters (for better randomization)
-        fetch_limit = int(limit * 1.5) if not has_filters else limit
+        fetch_limit = int(limit * 2) if not has_filters else limit
         params.append(fetch_limit)
         param_count += 1
         query += f" OFFSET ${param_count}"
