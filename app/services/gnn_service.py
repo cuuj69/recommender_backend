@@ -95,7 +95,14 @@ async def get_top_books_by_gnn(user_id: Union[str, UUID], limit: int = 10):
             else:
                 random_books = []
             
-            all_books = list(popular_books) + list(random_books)
+            # Deduplicate by ID when combining popular and random books
+            records_dict = {}
+            for record in popular_books:
+                records_dict[record["id"]] = record
+            for record in random_books:
+                if record["id"] not in records_dict:
+                    records_dict[record["id"]] = record
+            all_books = list(records_dict.values())
     
     if not all_books:
         return []
@@ -105,11 +112,18 @@ async def get_top_books_by_gnn(user_id: Union[str, UUID], limit: int = 10):
     
     # Batch process with numpy for better performance
     scored_books = []
+    seen_ids = set()  # Track IDs to prevent duplicates
     batch_size = 100
     for i in range(0, len(all_books), batch_size):
         batch = all_books[i:i + batch_size]
         
         for record in batch:
+            book_id = record["id"]
+            # Skip if we've already processed this book
+            if book_id in seen_ids:
+                continue
+            seen_ids.add(book_id)
+            
             if not record["gnn_vector"]:
                 continue
             book_vector = record["gnn_vector"]
@@ -121,7 +135,7 @@ async def get_top_books_by_gnn(user_id: Union[str, UUID], limit: int = 10):
                 # Calculate cosine similarity efficiently
                 score = np.dot(user_vec, book_vec) / (np.linalg.norm(user_vec) * np.linalg.norm(book_vec))
                 scored_books.append({
-                    "id": record["id"],
+                    "id": book_id,
                     "title": record["title"],
                     "author": record.get("author"),
                     "description": record.get("description"),

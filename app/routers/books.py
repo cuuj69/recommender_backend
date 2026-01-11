@@ -64,7 +64,7 @@ async def list_books(
     author: Optional[str] = Query(None, description="Filter by author"),
     genre: Optional[str] = Query(None, description="Filter by genre"),
 ):
-    """List books with optional filtering and pagination."""
+    """List books with optional filtering and pagination (ensures no duplicates)."""
     books = await book_service.list_books(
         limit=limit,
         offset=offset,
@@ -72,7 +72,18 @@ async def list_books(
         author=author,
         genre=genre,
     )
-    return [Book(**extract_book_data(book)) for book in books]
+    
+    # Final deduplication by ID before returning
+    seen_ids = set()
+    unique_books = []
+    for book in books:
+        book_data = extract_book_data(book)
+        book_id = book_data.get("id")
+        if book_id and book_id not in seen_ids:
+            seen_ids.add(book_id)
+            unique_books.append(Book(**book_data))
+    
+    return unique_books
 
 
 @router.get("/{book_id}", response_model=Book)

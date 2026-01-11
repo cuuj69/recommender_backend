@@ -21,10 +21,10 @@ async def list_books(
     author: Optional[str] = None,
     genre: Optional[str] = None,
 ) -> List[asyncpg.Record]:
-    """List books with optional filtering."""
+    """List books with optional filtering (ensures no duplicates)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        query = "SELECT * FROM books WHERE 1=1"
+        query = "SELECT DISTINCT ON (id) * FROM books WHERE 1=1"
         params = []
         param_count = 0
 
@@ -43,7 +43,7 @@ async def list_books(
             query += f" AND ${param_count} = ANY(genres)"
             params.append(genre)
 
-        query += " ORDER BY created_at DESC"
+        query += " ORDER BY id, created_at DESC"
         param_count += 1
         query += f" LIMIT ${param_count}"
         params.append(limit)
@@ -51,7 +51,18 @@ async def list_books(
         query += f" OFFSET ${param_count}"
         params.append(offset)
 
-        return await conn.fetch(query, *params)
+        books = await conn.fetch(query, *params)
+        
+        # Additional deduplication by ID (safety check)
+        seen_ids = set()
+        unique_books = []
+        for book in books:
+            book_id = book.get("id")
+            if book_id and book_id not in seen_ids:
+                seen_ids.add(book_id)
+                unique_books.append(book)
+        
+        return unique_books
 
 
 async def create_book(

@@ -82,7 +82,14 @@ async def get_top_books_by_content(user_embedding: List[float], limit: int = 10,
             else:
                 random_books = []
             
-            records = list(popular_books) + list(random_books)
+            # Deduplicate by ID when combining popular and random books
+            records_dict = {}
+            for record in popular_books:
+                records_dict[record["id"]] = record
+            for record in random_books:
+                if record["id"] not in records_dict:
+                    records_dict[record["id"]] = record
+            records = list(records_dict.values())
     
     if not records:
         return []
@@ -92,6 +99,7 @@ async def get_top_books_by_content(user_embedding: List[float], limit: int = 10,
     
     # Batch process with numpy for better performance
     scored_books = []
+    seen_ids = set()  # Track IDs to prevent duplicates
     batch_size = 100
     for i in range(0, len(records), batch_size):
         batch = records[i:i + batch_size]
@@ -100,6 +108,12 @@ async def get_top_books_by_content(user_embedding: List[float], limit: int = 10,
         book_vectors = []
         book_data = []
         for record in batch:
+            book_id = record["id"]
+            # Skip if we've already processed this book
+            if book_id in seen_ids:
+                continue
+            seen_ids.add(book_id)
+            
             if not record["content_embedding"]:
                 continue
             book_vector = record["content_embedding"]
@@ -111,7 +125,7 @@ async def get_top_books_by_content(user_embedding: List[float], limit: int = 10,
                 # Calculate cosine similarity efficiently
                 score = np.dot(user_vec, book_vec) / (np.linalg.norm(user_vec) * np.linalg.norm(book_vec))
                 scored_books.append({
-                    "id": record["id"],
+                    "id": book_id,
                     "title": record["title"],
                     "author": record.get("author"),
                     "description": record.get("description"),
