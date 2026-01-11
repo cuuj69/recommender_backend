@@ -1,4 +1,5 @@
 """Hybrid recommender logic (CBF + CF + GNN)."""
+import random
 from typing import List, Tuple, Union
 from uuid import UUID
 
@@ -340,12 +341,36 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                     import traceback
                     logging.error(traceback.format_exc())
     
-    # Sort by score and take top N
+    # Sort by score first
     sorted_candidates = sorted(unique_by_id.values(), key=lambda x: x.get("score", 0.0), reverse=True)
     
-    # Return top N unique books
+    # Add randomization: shuffle within score bands to ensure variety on each refresh
+    # Group candidates by score ranges and shuffle within each group
+    if len(sorted_candidates) > limit:
+        # Strategy: Take top candidates but add randomness
+        # 1. Keep the very top (top 30%) - these are the best matches
+        # 2. Randomly select from the rest (70%) to add variety
+        
+        top_count = max(1, int(limit * 0.3))  # Keep top 30%
+        remaining_candidates = sorted_candidates[top_count:]
+        
+        # Randomly select from remaining candidates
+        random.shuffle(remaining_candidates)
+        selected_remaining = remaining_candidates[:max(0, limit - top_count)]
+        
+        # Combine: top candidates + random selection from the rest
+        final_candidates = sorted_candidates[:top_count] + selected_remaining
+        
+        # Shuffle the final list to randomize order (but keep quality)
+        random.shuffle(final_candidates)
+    else:
+        # If we have fewer candidates than limit, just shuffle what we have
+        final_candidates = sorted_candidates.copy()
+        random.shuffle(final_candidates)
+    
+    # Return top N unique books (now randomized)
     unique_books = []
-    for record in sorted_candidates[:limit]:
+    for record in final_candidates[:limit]:
         unique_books.append(
             Book(
                 id=record["id"],
