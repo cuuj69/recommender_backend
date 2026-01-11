@@ -32,6 +32,12 @@ async def get_top_books_by_content(user_embedding: List[float], limit: int = 10,
                 SELECT id, title, author, description, genres, content_embedding
                 FROM books
                 WHERE content_embedding IS NOT NULL
+                    AND title IS NOT NULL 
+                    AND title != ''
+                    AND author IS NOT NULL 
+                    AND author != ''
+                    AND description IS NOT NULL 
+                    AND description != ''
                 """
             )
         else:
@@ -48,6 +54,12 @@ async def get_top_books_by_content(user_embedding: List[float], limit: int = 10,
                 FROM books b
                 LEFT JOIN interactions i ON i.book_id = b.id
                 WHERE b.content_embedding IS NOT NULL
+                    AND b.title IS NOT NULL 
+                    AND b.title != ''
+                    AND b.author IS NOT NULL 
+                    AND b.author != ''
+                    AND b.description IS NOT NULL 
+                    AND b.description != ''
                 GROUP BY b.id, b.title, b.author, b.description, b.genres, b.content_embedding
                 ORDER BY COUNT(i.id) DESC, b.id DESC
                 LIMIT $1
@@ -71,7 +83,13 @@ async def get_top_books_by_content(user_embedding: List[float], limit: int = 10,
                         SELECT id, title, author, description, genres, content_embedding
                         FROM books
                         WHERE content_embedding IS NOT NULL
-                        AND id % 7 = 0  -- Sample pattern for diversity
+                            AND id % 7 = 0  -- Sample pattern for diversity
+                            AND title IS NOT NULL 
+                            AND title != ''
+                            AND author IS NOT NULL 
+                            AND author != ''
+                            AND description IS NOT NULL 
+                            AND description != ''
                         ORDER BY id DESC
                         LIMIT $1
                         """,

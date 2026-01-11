@@ -43,6 +43,12 @@ async def get_top_books_by_cf(user_cf_vector: List[float], limit: int = 10, samp
                 SELECT id, title, author, description, genres, cf_embedding
                 FROM books
                 WHERE cf_embedding IS NOT NULL
+                    AND title IS NOT NULL 
+                    AND title != ''
+                    AND author IS NOT NULL 
+                    AND author != ''
+                    AND description IS NOT NULL 
+                    AND description != ''
                 """
             )
         else:
@@ -58,6 +64,12 @@ async def get_top_books_by_cf(user_cf_vector: List[float], limit: int = 10, samp
                 FROM books b
                 LEFT JOIN interactions i ON i.book_id = b.id
                 WHERE b.cf_embedding IS NOT NULL
+                    AND b.title IS NOT NULL 
+                    AND b.title != ''
+                    AND b.author IS NOT NULL 
+                    AND b.author != ''
+                    AND b.description IS NOT NULL 
+                    AND b.description != ''
                 GROUP BY b.id, b.title, b.author, b.description, b.genres, b.cf_embedding
                 ORDER BY COUNT(i.id) DESC, b.id DESC
                 LIMIT $1
@@ -72,7 +84,13 @@ async def get_top_books_by_cf(user_cf_vector: List[float], limit: int = 10, samp
                     SELECT id, title, author, description, genres, cf_embedding
                     FROM books
                     WHERE cf_embedding IS NOT NULL
-                    AND id % 7 = 0  -- Sample pattern for diversity
+                        AND id % 7 = 0  -- Sample pattern for diversity
+                        AND title IS NOT NULL 
+                        AND title != ''
+                        AND author IS NOT NULL 
+                        AND author != ''
+                        AND description IS NOT NULL 
+                        AND description != ''
                     ORDER BY id DESC
                     LIMIT $1
                     """,

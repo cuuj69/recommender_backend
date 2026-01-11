@@ -190,6 +190,12 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                             FROM books b
                             WHERE ({' OR '.join(query_parts)})
                                 AND b.id != ALL(${excluded_ids_param}::int[])
+                                AND b.title IS NOT NULL 
+                                AND b.title != ''
+                                AND b.author IS NOT NULL 
+                                AND b.author != ''
+                                AND b.description IS NOT NULL 
+                                AND b.description != ''
                             ORDER BY {order_clause} b.id DESC
                             LIMIT ${limit_param}
                         """
@@ -233,6 +239,12 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                                 SELECT id, title, author, description, genres
                                 FROM books
                                 WHERE id != ALL($1::int[])
+                                    AND title IS NOT NULL 
+                                    AND title != ''
+                                    AND author IS NOT NULL 
+                                    AND author != ''
+                                    AND description IS NOT NULL 
+                                    AND description != ''
                                 ORDER BY id DESC
                                 LIMIT $2
                                 """,
@@ -245,6 +257,12 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                                 """
                                 SELECT id, title, author, description, genres
                                 FROM books
+                                WHERE title IS NOT NULL 
+                                    AND title != ''
+                                    AND author IS NOT NULL 
+                                    AND author != ''
+                                    AND description IS NOT NULL 
+                                    AND description != ''
                                 ORDER BY id DESC
                                 LIMIT $1
                                 """,
@@ -291,6 +309,12 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                             SELECT id, title, author, description, genres
                             FROM books
                             WHERE id != ALL($1::int[])
+                                AND title IS NOT NULL 
+                                AND title != ''
+                                AND author IS NOT NULL 
+                                AND author != ''
+                                AND description IS NOT NULL 
+                                AND description != ''
                             ORDER BY id DESC
                             LIMIT $2
                             """,
