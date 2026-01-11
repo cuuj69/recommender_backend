@@ -109,8 +109,114 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
         except Exception:
             pass
     
-    # 5. If no personalized recommendations found (even with sufficient interactions), return empty
-    # We don't fall back to popular books - only return personalized recommendations
+    # 5. Fallback: If no personalized recommendations found, use interaction-based recommendations
+    # This works even when books don't have embeddings - uses genres/authors from user's interactions
+    if not unique_by_id:
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                # Get user's interaction patterns (genres and authors they've interacted with)
+                user_patterns = await conn.fetch(
+                    """
+                    SELECT DISTINCT 
+                        unnest(b.genres) as genre,
+                        b.author
+                    FROM interactions i
+                    JOIN books b ON b.id = i.book_id
+                    WHERE i.user_id = $1
+                        AND (b.genres IS NOT NULL OR b.author IS NOT NULL)
+                    """,
+                    user_id
+                )
+                
+                # Extract unique genres and authors
+                user_genres = set()
+                user_authors = set()
+                for row in user_patterns:
+                    if row["genre"]:
+                        user_genres.add(row["genre"])
+                    if row["author"]:
+                        user_authors.add(row["author"])
+                
+                # Get books that match user's preferences but they haven't interacted with
+                if user_genres or user_authors:
+                    # Get books user has already interacted with (to exclude)
+                    interacted_books = await conn.fetch(
+                        "SELECT DISTINCT book_id FROM interactions WHERE user_id = $1",
+                        user_id
+                    )
+                    interacted_ids = {row["book_id"] for row in interacted_books}
+                    
+                    # Build query to find similar books
+                    query_parts = []
+                    params = []
+                    param_count = 0
+                    
+                    if user_genres:
+                        param_count += 1
+                        query_parts.append(f"${param_count}::text[] && b.genres")
+                        params.append(list(user_genres))
+                    
+                    if user_authors:
+                        param_count += 1
+                        query_parts.append(f"b.author = ANY(${param_count}::text[])")
+                        params.append(list(user_authors))
+                    
+                    if query_parts:
+                        # Build the query with proper parameter numbering
+                        param_count += 1
+                        excluded_ids_param = param_count
+                        params.append(list(interacted_ids))
+                        
+                        # Add author array for ordering if we have authors
+                        if user_authors:
+                            param_count += 1
+                            author_array_param = param_count
+                            params.append(list(user_authors))
+                            order_clause = f"CASE WHEN b.author = ANY(${author_array_param}::text[]) THEN 1 ELSE 2 END,"
+                        else:
+                            order_clause = ""
+                        
+                        param_count += 1
+                        limit_param = param_count
+                        params.append(limit * 2)
+                        
+                        query = f"""
+                            SELECT DISTINCT b.id, b.title, b.author, b.description, b.genres
+                            FROM books b
+                            WHERE ({' OR '.join(query_parts)})
+                                AND b.id != ALL(${excluded_ids_param}::int[])
+                            ORDER BY {order_clause} b.id DESC
+                            LIMIT ${limit_param}
+                        """
+                        
+                        fallback_books = await conn.fetch(query, *params)
+                        
+                        for book in fallback_books:
+                            book_id = book.get("id")
+                            if book_id and book_id not in unique_by_id:
+                                # Calculate a simple score based on matching genres/authors
+                                score = 0.0
+                                if book.get("genres"):
+                                    matching_genres = len(set(book["genres"]) & user_genres)
+                                    score += matching_genres * 0.5
+                                if book.get("author") in user_authors:
+                                    score += 1.0
+                                
+                                unique_by_id[book_id] = {
+                                    "id": book_id,
+                                    "title": book.get("title", ""),
+                                    "author": book.get("author"),
+                                    "description": book.get("description"),
+                                    "genres": book.get("genres"),
+                                    "score": score
+                                }
+                                is_personalized = True  # This is still personalized based on interactions
+        except Exception as e:
+            # Log the error but continue
+            import logging
+            logging.error(f"Error in fallback recommendation: {e}")
+            pass
     
     # Sort by score and take top N
     sorted_candidates = sorted(unique_by_id.values(), key=lambda x: x.get("score", 0.0), reverse=True)
