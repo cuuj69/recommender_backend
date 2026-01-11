@@ -112,9 +112,16 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
     # 5. Fallback: If no personalized recommendations found, use interaction-based recommendations
     # This works even when books don't have embeddings - uses genres/authors from user's interactions
     if not unique_by_id:
-        try:
-            pool = await get_pool()
-            async with pool.acquire() as conn:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            try:
+                # Get books user has already interacted with (to exclude)
+                interacted_books = await conn.fetch(
+                    "SELECT DISTINCT book_id FROM interactions WHERE user_id = $1",
+                    user_id
+                )
+                interacted_ids = {row["book_id"] for row in interacted_books}
+                
                 # Get user's interaction patterns (genres and authors they've interacted with)
                 user_patterns = await conn.fetch(
                     """
@@ -138,15 +145,12 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                     if row["author"]:
                         user_authors.add(row["author"])
                 
+                # Debug: log what we found
+                import logging
+                logging.info(f"User {user_id} - Genres: {user_genres}, Authors: {user_authors}, Interacted IDs: {len(interacted_ids)}")
+                
                 # Get books that match user's preferences but they haven't interacted with
                 if user_genres or user_authors:
-                    # Get books user has already interacted with (to exclude)
-                    interacted_books = await conn.fetch(
-                        "SELECT DISTINCT book_id FROM interactions WHERE user_id = $1",
-                        user_id
-                    )
-                    interacted_ids = {row["book_id"] for row in interacted_books}
-                    
                     # Build query to find similar books
                     query_parts = []
                     params = []
@@ -191,6 +195,7 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                         """
                         
                         fallback_books = await conn.fetch(query, *params)
+                        logging.info(f"Fallback query returned {len(fallback_books)} books")
                         
                         for book in fallback_books:
                             book_id = book.get("id")
@@ -212,11 +217,104 @@ async def recommend_for_user(user_id: Union[str, UUID], limit: int = 10) -> Tupl
                                     "score": score
                                 }
                                 is_personalized = True  # This is still personalized based on interactions
-        except Exception as e:
-            # Log the error but continue
-            import logging
-            logging.error(f"Error in fallback recommendation: {e}")
-            pass
+                
+                # If still no recommendations, use a more basic fallback: just recommend any books they haven't seen
+                # This will work even if books have no genres/authors
+                if not unique_by_id:
+                    try:
+                        # Get any books the user hasn't interacted with
+                        # Use empty array if no interactions (shouldn't happen, but safe)
+                        excluded_ids_list = list(interacted_ids) if interacted_ids else []
+                        
+                        # If we have interacted books, exclude them. Otherwise, just get any books.
+                        if excluded_ids_list:
+                            any_books = await conn.fetch(
+                                """
+                                SELECT id, title, author, description, genres
+                                FROM books
+                                WHERE id != ALL($1::int[])
+                                ORDER BY id DESC
+                                LIMIT $2
+                                """,
+                                excluded_ids_list,
+                                limit * 2
+                            )
+                        else:
+                            # Fallback if somehow no interacted_ids (shouldn't happen but be safe)
+                            any_books = await conn.fetch(
+                                """
+                                SELECT id, title, author, description, genres
+                                FROM books
+                                ORDER BY id DESC
+                                LIMIT $1
+                                """,
+                                limit * 2
+                            )
+                        
+                        for book in any_books:
+                            book_id = book.get("id")
+                            if book_id and book_id not in unique_by_id:
+                                unique_by_id[book_id] = {
+                                    "id": book_id,
+                                    "title": book.get("title", ""),
+                                    "author": book.get("author"),
+                                    "description": book.get("description"),
+                                    "genres": book.get("genres"),
+                                    "score": 0.5  # Basic score for fallback
+                                }
+                                is_personalized = True  # Still based on their interactions (excluding what they've seen)
+                    except Exception as e2:
+                        import logging
+                        logging.error(f"Error in basic fallback recommendation: {e2}")
+                        import traceback
+                        logging.error(traceback.format_exc())
+                        # Don't pass - we want to see what's wrong
+                        pass
+            except Exception as e:
+                # Log the error but don't fail completely - try final fallback
+                import logging
+                logging.error(f"Error in fallback recommendation: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
+                
+                # Last resort: try to get ANY books at all with a fresh connection
+                try:
+                    async with pool.acquire() as conn2:
+                        interacted_books = await conn2.fetch(
+                            "SELECT DISTINCT book_id FROM interactions WHERE user_id = $1",
+                            user_id
+                        )
+                            interacted_ids = {row["book_id"] for row in interacted_books}
+                        
+                        any_books = await conn2.fetch(
+                            """
+                            SELECT id, title, author, description, genres
+                            FROM books
+                            WHERE id != ALL($1::int[])
+                            ORDER BY id DESC
+                            LIMIT $2
+                            """,
+                            list(interacted_ids) if interacted_ids else [],
+                            limit * 2
+                        )
+                        
+                        for book in any_books:
+                            book_id = book.get("id")
+                            if book_id:
+                                unique_by_id[book_id] = {
+                                    "id": book_id,
+                                    "title": book.get("title", ""),
+                                    "author": book.get("author"),
+                                    "description": book.get("description"),
+                                    "genres": book.get("genres"),
+                                    "score": 0.3
+                                }
+                                is_personalized = True
+                except Exception as final_error:
+                    import logging
+                    logging.error(f"Even final fallback failed: {final_error}")
+                    import traceback
+                    logging.error(traceback.format_exc())
     
     # Sort by score and take top N
     sorted_candidates = sorted(unique_by_id.values(), key=lambda x: x.get("score", 0.0), reverse=True)
