@@ -1,0 +1,50 @@
+QUICK START GUIDE
+=================
+
+1. Setup Python Environment
+   cd backend_new
+   python3.12 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+
+2. Create .env file in backend_new/ with your database credentials:
+   APP_ENV=development
+   PGHOST=localhost
+   PGPORT=5432
+   PGDATABASE=book_recommender
+   PGUSER=your_username
+   PGPASSWORD=your_password
+   PGVECTOR_SCHEMA=public
+   MODEL_DIR=./models
+   SENTENCE_MODEL_PATH=./models/sentence_model
+   JWT_SECRET=your-secret-key-here
+   JWT_ALGORITHM=HS256
+   ACCESS_TOKEN_EXPIRE_MINUTES=60
+
+3. Verify database connection:
+   python -c "import asyncio; from app.db.connection import init_db; asyncio.run(init_db())"
+
+4. Ingest books (this takes a while):
+   python scripts/ingest_books.py
+
+5. Start backend server:
+   uvicorn app.main:app --reload
+
+6. (Optional) Start frontend in another terminal:
+   cd ../Reedo
+   python3 -m http.server 8080
+
+7. Create user interactions (sign up, browse books via frontend/API)
+
+8. After you have interactions, train models:
+   python scripts/train_cf.py
+   python scripts/train_gnn.py
+
+9. Test recommendations via frontend or API
+
+NOTES:
+- Make sure books_data.csv is in backend_new/ directory
+- Database schema creates automatically on first connection
+- Embeddings are generated during ingestion (takes time)
+- Need at least 2 users with interactions before training works
+
